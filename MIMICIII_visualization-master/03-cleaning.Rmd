@@ -1,0 +1,272 @@
+
+
+# Data transformation
+
+```{r, include=FALSE}
+# These will install required packages if they are not already installed
+if (!require("ggplot2")) {
+   install.packages("ggplot2")
+   library(ggplot2)
+}
+if (!require("dplyr")) {
+   install.packages("dplyr2")
+   library(dplyr)
+}
+if (!require("knitr")) {
+   install.packages("knitr")
+   library(knitr)
+}
+if (!require("xtable")) {
+   install.packages("xtable")
+   library(xtable)
+}
+if (!require("caret")) {
+   install.packages("caret")
+   library(caret)
+}
+if (!require("reshape2")){
+  install.packages("reshape2")
+   library(reshape2)
+} 
+if (!require("gridExtra")){
+  install.packages("gridExtra")
+   library(gridExtra)
+} 
+if (!require("MASS")){
+  install.packages("MASS")
+   library(MASS)
+} 
+if (!require("reshape2")) {
+   install.packages("nnet")
+   library(lubridate)
+}
+if (!require("nnet")) {
+   install.packages("reshape2")
+   library(lubridate)
+}
+if (!require("tidyverse")) {
+   install.packages("tidyverse")
+   library(tidyverse)
+}
+if (!require("lubridate")) {
+   install.packages("lubridate")
+   library(lubridate)
+}
+if (!require("readr")) {
+   install.packages("readr")
+   library(readr)
+}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+read in data
+```{r}
+
+# Read in synthetic data
+
+admissions<-read.csv("data/ADMISSIONS.csv")
+patients<-read.csv("data/PATIENTS.csv")
+#admissions <- admissions[complete.cases(admissions),]
+#patients <- patients[complete.cases(patients),]
+icu_stay <- read.csv("data/ICUSTAYS.csv")
+#icu_stay <- icu_stay[complete.cases(icu_stay), ]
+
+```
+
+
+
+create the combine DF and add location, race, insurance, gender, first service
+```{r}
+fst_service <- icu_stay[, c("SUBJECT_ID", "HADM_ID", "ICUSTAY_ID", "FIRST_CAREUNIT", "LOS")]
+
+loc_race_insur <- admissions[,c("SUBJECT_ID","HADM_ID","ADMISSION_LOCATION","INSURANCE","ETHNICITY","ADMITTIME","DEATHTIME")]
+patient_gender <- patients[,c("SUBJECT_ID","GENDER","DOB")]
+loc_race_insur$ADMISSION_LOCATION<-fct_collapse(loc_race_insur$ADMISSION_LOCATION,
+Emergencyroom =c("EMERGENCY ROOM ADMIT"),
+Transfer=c("TRANSFER FROM HOSP/EXTRAM","TRANSFER FROM OTHER HEALT","TRANSFER FROM SKILLED NUR","TRSF WITHIN THIS FACILITY"),
+Outpatient=c("** INFO NOT AVAILABLE **","CLINIC REFERRAL/PREMATURE","HMO REFERRAL/SICK","PHYS REFERRAL/NORMAL DELI"))
+loc_race_insur$ETHNICITY<-fct_collapse(loc_race_insur$ETHNICITY,
+Asian=c(levels(loc_race_insur$ETHNICITY)[3:12]),
+Black=c(levels(loc_race_insur$ETHNICITY)[13:16]),
+White=c(levels(loc_race_insur$ETHNICITY)[37:41]),
+Unknown=c(levels(loc_race_insur$ETHNICITY)[35:36]),
+Other=c(levels(loc_race_insur$ETHNICITY)[c(1:2,17:34)]))
+loc_race_insur$INSURANCE<-fct_collapse(loc_race_insur$INSURANCE,Medicareonly=c("Medicare"), Private=c("Private" ,"Self Pay"), "Medicaid/other"=c("Government", "Medicaid"))
+ms_fst_service <- fst_service[fst_service$FIRST_CAREUNIT == "MICU" | fst_service$FIRST_CAREUNIT == "SICU", ]
+ms_fst_service <- ms_fst_service[ms_fst_service$LOS >= 1/6, ]
+ms_fst_service <- ms_fst_service[, c("SUBJECT_ID", "HADM_ID", "ICUSTAY_ID", "FIRST_CAREUNIT")]
+ms_fst_service <- ms_fst_service[!duplicated(ms_fst_service[, "SUBJECT_ID"]), ]
+loc_race_insur<-loc_race_insur[!duplicated(loc_race_insur$SUBJECT_ID),]
+
+comb<-inner_join(loc_race_insur,patient_gender,by="SUBJECT_ID")
+comb <- inner_join(ms_fst_service,comb, by=c("HADM_ID","SUBJECT_ID"))
+
+```
+add 30 day mortailty to DF
+```{r}
+death_time<-ymd_hms(comb$DEATHTIME)
+admit_time<-ymd_hms(comb$ADMITTIME)
+mortality_thirty<-(death_time-admit_time)/86400
+comb$mortality_time<-mortality_thirty
+comb=within(comb,{mortality_withinthirtydays=ifelse(mortality_time<30,"1","0")})
+comb$mortality_withinthirtydays[is.na(comb$mortality_withinthirtydays)] <- 0
+```
+add age to DF
+```{r}
+
+#convert admittime,deathtime,dob for format year-month-day-hour-min-seconds 
+#to normal format
+admitdate <- ymd_hms(comb$ADMITTIME)
+deathdate <- ymd_hms(comb$DEATHTIME)
+birthdate <- ymd_hms(comb$DOB)
+
+#take the difference, divide by 365, round it to get years as unit
+comb$age  <- round((difftime(admitdate,birthdate,units="days"))/365.242)
+#comb$timedf <- round((difftime(deathdate,birthdate,units="days"))/365.242)
+
+#remove rows when people's age under 18
+comb <- subset(comb, comb$age>=18)
+comb$age <- as.numeric(comb$age)
+
+#create a new column named AGE to seperate age by range
+comb$AGE <- ifelse(comb$age<46,"<=45",
+           ifelse(comb$age>45 & comb$age<66,"46-65",
+           ifelse(comb$age>65 & comb$age<81,"66-80",
+           ifelse(comb$age>80,"81+",
+                  NA))))
+comb$AGE <- as.factor(comb$AGE)
+
+#remove age
+comb$age <- NULL
+```
+add comorbidities to DF
+```{r}
+ICD<-read.csv("data/DIAGNOSES_ICD.csv")
+ICD<-ICD[complete.cases(ICD),]
+COM<-ICD[,c("SUBJECT_ID","ICD9_CODE")]
+
+
+COM_CHF <- COM[COM$ICD9_CODE %in%  c("39891", "40201", "40211", "40291","40401", "40403", "40411", "40413","40491", "40493", 4254:4259,4280:4289) ,]
+COM_CHF<-COM_CHF[!duplicated(COM_CHF$SUBJECT_ID),]
+COM_CHF$DISEASE <- as.factor("Congestive heart failure")
+COM_CHF<- COM_CHF[,c("SUBJECT_ID","DISEASE")]
+
+
+COM_AM <- COM[COM$ICD9_CODE %in% c(1400:1729, 1740:1958,2000:2089, "2386") ,]
+COM_AM<-COM_AM[!duplicated(COM_AM$SUBJECT_ID),]
+COM_AM$DISEASE <- as.factor("Any malignancy")
+COM_AM<- COM_AM[,c("SUBJECT_ID","DISEASE")]
+
+COM_BOTH <-inner_join(COM_AM,COM_CHF,by=c("SUBJECT_ID"))
+COM_BOTH<- COM_BOTH[,c("SUBJECT_ID","DISEASE.x","DISEASE.y")]
+COM_BOTH$DISEASE <- as.factor("BOTH")
+COM_BOTH<- COM_BOTH[,c("SUBJECT_ID","DISEASE")]
+
+COM_ALL <- full_join(COM_AM,COM_CHF,by="SUBJECT_ID")
+COM_OTHER <- anti_join(COM,COM_ALL,by="SUBJECT_ID")
+COM_OTHER <- COM_OTHER[!duplicated(COM_OTHER$SUBJECT_ID),]
+COM_OTHER$DISEASE <- as.factor("OTHER")
+COM_OTHER<- COM_OTHER[,c("SUBJECT_ID","DISEASE")]
+
+COM1 <- anti_join(COM_CHF,COM_BOTH,by="SUBJECT_ID")
+COM2 <- anti_join(COM_AM,COM_BOTH,by="SUBJECT_ID")
+
+COM_DISEASE <- rbind(COM1,COM2,COM_OTHER,COM_BOTH)
+
+comb<-inner_join(comb,COM_DISEASE,by=c("SUBJECT_ID"))
+```
+
+
+
+
+```{r}
+ICUSTAYS_clean <-icu_stay[, c("SUBJECT_ID","HADM_ID", "ICUSTAY_ID", "FIRST_CAREUNIT","LAST_CAREUNIT", "LOS")]
+ICUSTAYS_clean <-ICUSTAYS_clean[!duplicated(ICUSTAYS_clean[, "SUBJECT_ID"]), ]
+
+icucomb<-inner_join(loc_race_insur,patient_gender,by="SUBJECT_ID")
+icucomb<-inner_join(ICUSTAYS_clean,icucomb, by=c("SUBJECT_ID","HADM_ID"))
+```
+
+
+Join age and change the bins
+```{r}
+#convert admittime,deathtime,dob for format year-month-day-hour-min-seconds 
+#to normal format
+admitdate <- ymd_hms(icucomb$ADMITTIME)
+birthdate <- ymd_hms(icucomb$DOB)
+
+#take the difference, divide by 365, round it to get years as unit
+icucomb$age  <- round((difftime(admitdate,birthdate,units="days"))/365.242)
+icucomb$age <- as.numeric(icucomb$age)
+
+#create a new column named AGE to seperate age by range
+icucomb$AGE <- ifelse(icucomb$age<=18,"18-",
+            ifelse(icucomb$age>18 & icucomb$age<=45,"18-45",
+           ifelse(icucomb$age>45 & icucomb$age<=65,"46-65",
+           ifelse(icucomb$age>65 & icucomb$age<=80,"66-80",
+           ifelse(icucomb$age>80,"81+",
+                  NA)))))
+icucomb$AGE <- as.factor(icucomb$AGE)
+
+#change bins
+icucomb$AGE_rebin1 <- ifelse(icucomb$age<=5,"5-",
+            ifelse(icucomb$age>5 & icucomb$age<=10,"5-10",
+            ifelse(icucomb$age>10 & icucomb$age<=15,"10-15",
+            ifelse(icucomb$age>15 & icucomb$age<=20,"15-20",
+            ifelse(icucomb$age>20 & icucomb$age<=45,"20-45",
+           ifelse(icucomb$age>45 & icucomb$age<=65,"46-65",
+           ifelse(icucomb$age>65 & icucomb$age<=80,"66-80",
+           ifelse(icucomb$age>80,"81+",
+                  NA))))))))
+icucomb$AGE_rebin1 <- as.factor(icucomb$AGE_rebin1)
+
+#change bins again
+icucomb$AGE_rebin2 <- ifelse(icucomb$age<=1,"1-",
+            ifelse(icucomb$age>1 & icucomb$age<=2,"1-2",
+            ifelse(icucomb$age>2 & icucomb$age<=3,"2-3",
+            ifelse(icucomb$age>3 & icucomb$age<=4,"3-4",
+            ifelse(icucomb$age>4 & icucomb$age<=5,"4-5",
+           ifelse(icucomb$age>5 & icucomb$age<=65,"5-65",
+           ifelse(icucomb$age>65 & icucomb$age<=80,"66-80",
+           ifelse(icucomb$age>80,"81+",
+                  NA))))))))
+icucomb$AGE_rebin2 <- as.factor(icucomb$AGE_rebin2)
+#change bins last time
+icucomb$AGE_rebin3 <- ifelse(icucomb$age<=1,"1-",
+            ifelse(icucomb$age>1,"1+",
+                  NA))
+icucomb$AGE_rebin3 <- as.factor(icucomb$AGE_rebin3)
+
+#remove age
+icucomb$age <- NULL
+```
+
+```{r}
+
+icucomb$group<-0
+icucomb=within(icucomb,{group=ifelse(SUBJECT_ID<35000,"0","1")})
+
+```
+
+```{r}
+
+CUSTAYS_clean <-icu_stay[, c("SUBJECT_ID", "HADM_ID", "ICUSTAY_ID", "FIRST_CAREUNIT","LAST_CAREUNIT", "LOS")]
+
+ICUSTAYS_clean <-ICUSTAYS_clean[!duplicated(ICUSTAYS_clean[, "SUBJECT_ID"]), ]
+
+loc_race_insur_1 <- admissions[,c("SUBJECT_ID","DIAGNOSIS")]
+loc_race_insur_1 <- loc_race_insur_1[!duplicated(loc_race_insur_1$SUBJECT_ID),]
+
+icucomb_check<-inner_join(ICUSTAYS_clean,loc_race_insur_1, by=c("SUBJECT_ID"))
+icucomb_check$newborn <- 0
+icucomb_check=within(icucomb_check,{newborn=ifelse(DIAGNOSIS=="NEWBORN","NEWBORN","NOT NEWBORN")})
+
+icucomb_check$group<-0
+icucomb_check=within(icucomb_check,{group=ifelse(SUBJECT_ID<35000,"0","1")})
+
+```
+
+
+
+

@@ -1,0 +1,126 @@
+# Missing values
+
+
+```{r, include=FALSE}
+# These will install required packages if they are not already installed
+if (!require("ggplot2")) {
+   install.packages("ggplot2")
+   library(ggplot2)
+}
+if (!require("dplyr")) {
+   install.packages("dplyr2")
+   library(dplyr)
+}
+if (!require("knitr")) {
+   install.packages("knitr")
+   library(knitr)
+}
+if (!require("xtable")) {
+   install.packages("xtable")
+   library(xtable)
+}
+if (!require("caret")) {
+   install.packages("caret")
+   library(caret)
+}
+if (!require("reshape2")){
+  install.packages("reshape2")
+   library(reshape2)
+} 
+if (!require("gridExtra")){
+  install.packages("gridExtra")
+   library(gridExtra)
+} 
+if (!require("MASS")){
+  install.packages("MASS")
+   library(MASS)
+} 
+if (!require("reshape2")) {
+   install.packages("nnet")
+   library(lubridate)
+}
+if (!require("nnet")) {
+   install.packages("reshape2")
+   library(lubridate)
+}
+if (!require("tidyverse")) {
+   install.packages("tidyverse")
+   library(tidyverse)
+}
+if (!require("lubridate")) {
+   install.packages("lubridate")
+   library(lubridate)
+}
+if (!require("VIM")) {
+   install.packages("VIM")
+   library(lubridate)
+}
+if (!require("naniar")) {
+   install.packages("naniar")
+   library(lubridate)
+}
+if (!require("Amelia")) {
+   install.packages("Amelia")
+   library(lubridate)
+}
+if (!require("extracat")) {
+   install.packages("extracat")
+   library(lubridate)
+}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+
+```{r}
+admissions<-read.csv('C:/Users/pudon/Desktop/class/data visualization/final_project/MIMICIII_visualization/data/ADMISSIONS.csv')
+
+patients<-read.csv("C:/Users/pudon/Desktop/class/data visualization/final_project/MIMICIII_visualization/data/PATIENTS.csv")
+
+icu_stay <- read.csv("C:/Users/pudon/Desktop/class/data visualization/final_project/MIMICIII_visualization/data/ICUSTAYS.csv")
+
+ICD<-read.csv("C:/Users/pudon/Desktop/class/data visualization/final_project/MIMICIII_visualization/data/DIAGNOSES_ICD.csv")
+```
+
+```{r}
+admissions[admissions==""] <- NA
+colSums(is.na(admissions))
+missmap(admissions)
+visna(admissions, sort="b")
+
+```
+EDREGTIME, EDOUTTIME are time that the patient was registered and discharged from the emergency department. Basically, we are not interested in these columns, so they don't have influence on our project.
+```{r}
+patients[patients==""] <- NA
+colSums(is.na(patients))
+missmap(patients)
+visna(patients, sort="b")
+
+
+```
+DOD is the date of death for the given patient. DOD_HOSP is the date of death as recorded in the hospital database. DOD_SSN is the date of death from the social security database. Is a patient do not die, then we don't have data in these columns.
+
+
+```{r}
+# No missing data in icu_stay
+icu_stay[icu_stay==""] <- NA
+colSums(is.na(icu_stay))
+missmap(icu_stay)
+
+```
+
+```{r}
+#No missing data in ICD
+ICD[ICD==""] <- NA
+colSums(is.na(ICD))
+missmap(ICD)
+```
+
+
+```{r}
+comb[comb==""] <- NA
+colSums(is.na(comb))
+missmap(comb)
+visna(comb, sort="b")
+
+```
+We can see that all the missing data are in DEATHTIME and mortality_time. This is because not all the patients die and those who are alive don't have DEATHTIME and mortality_time.
